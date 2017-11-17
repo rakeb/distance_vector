@@ -107,7 +107,6 @@ def send_dvs_to_neighbours(dv_list, ports):
     global router_name
     global host
     distance_vector_pkt = namedtuple('dvs_pkt', 'dvs router_name dv_list')
-    # make handshaking packet
     dvs_pkt = distance_vector_pkt('dvs', router_name, dv_list)
     pkt_list = [dvs_pkt.dvs, dvs_pkt.router_name, dvs_pkt.dv_list]
     pkt = pickle.dumps(pkt_list)
@@ -134,6 +133,46 @@ def print_output(dv_list):
               _tuple[1])
 
 
+def send_recursion_free_dvs(dv_list):
+    global router_name
+    global host
+    global neighbours_port_dict
+    distance_vector_pkt = namedtuple('dvs_pkt', 'dvs router_name dv_list')
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # Create a socket object
+
+    # print("broadcast dvs packet ", pkt_list)
+
+    # print("neighbours_port_dict ", neighbours_port_dict)
+
+    dvs_pkt = distance_vector_pkt('dvs', router_name, dv_list)
+    pkt_list = [dvs_pkt.dvs, dvs_pkt.router_name, dvs_pkt.dv_list]
+    pkt = pickle.dumps(pkt_list)
+    send_modified_pkt = None
+
+    for neighbour_router_name, port in neighbours_port_dict.items():
+        if port != ack_port:
+            send_modified_pkt = False
+            copy_dv_list = dv_list.copy()
+            for going_to_router, _tuple in dv_list.items():
+                next_hop = _tuple[0]
+                # cost = _tuple[1]
+                if neighbour_router_name == next_hop:
+                    _tuple = (next_hop, sys.float_info.max)
+                    copy_dv_list[going_to_router] = _tuple
+                    send_modified_pkt = True
+            if send_modified_pkt:
+                m_dvs_pkt = distance_vector_pkt('dvs', router_name, copy_dv_list)
+                m_pkt_list = [m_dvs_pkt.dvs, m_dvs_pkt.router_name, m_dvs_pkt.dv_list]
+                m_pkt = pickle.dumps(m_pkt_list)
+                # print("broadcast dvs packet, router: ", neighbour_router_name, " packet: ", m_pkt_list)
+                s.sendto(m_pkt, (host, port))
+            else:
+                # print("broadcast dvs packet, router: ", neighbour_router_name, " packet: ", pkt_list)
+                s.sendto(pkt, (host, port))
+
+    s.close()
+
+
 # python signal handler, param unused but required as the handler fired by the system
 def re_transmitter(signum, frame):
     global neighbours_port
@@ -141,10 +180,13 @@ def re_transmitter(signum, frame):
     # print("neighbours_port: ", neighbours_port)
     dv_list = calculate_distance_vector()
 
-    # print("Calculated matrix: ")
+    # print("Calculated dv_list: ", dv_list)
     # print_dvs_matrix()
-
-    send_dvs_to_neighbours(dv_list, neighbours_port)
+    remove_recursion = custom_utils.read_config()
+    if remove_recursion == "True":
+        send_recursion_free_dvs(dv_list)
+    else:
+        send_dvs_to_neighbours(dv_list, neighbours_port)
 
     print_output(dv_list)
 

@@ -46,13 +46,10 @@ def parse_input_file(input_file):
 def read_config():
     config = configparser.ConfigParser()
     config.read('config.ini')
-    server_config = config['server']
-    client_config = config['client']
     default_config = config['DEFAULT']
-    data_file_name = client_config['data_file_name']
-    ack_port = int(default_config['ack_port'])
+    remove_recursion = default_config['remove_recursion']
 
-    return data_file_name
+    return remove_recursion
 
 
 def get_keys_from_dict(_dict):
