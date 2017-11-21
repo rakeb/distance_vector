@@ -15,7 +15,7 @@ def parse_command_line_arguments():
         # print(router_name)
 
     except:
-        print("Provide <file_name> <port_number> and <number_of_packets> as argument")
+        print("Provide <file_name> as argument, e.g input_files/a.dat")
         exit(0)
 
     return input_file, router_name
