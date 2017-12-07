@@ -10,9 +10,13 @@ import sys
 import threading
 from collections import namedtuple
 
+import time as T_T
+from time import time
+
 import custom_utils
 
-FREQUENCY = 5
+FREQUENCY = 2
+CHECK_ROUTER_DEAD = 5
 output_number = 1
 PORT_RANGE = list(range(10001, 20021))
 
@@ -23,13 +27,14 @@ lock = threading.RLock()
 data_file_name = None
 ack_socket = None
 ack_port = None
-neighbours = []
-neighbours_cost = None
+
+alive_neighbours_dict = {}
+dead_router_dict = {}
+neighbours_cost_dict = None
 neighbours_port_dict = {}
 neighbours_port = []
+all_router_port_dict = {}
 
-all_router_port = {}
-all_router = []
 router_name = None
 
 matrix_distance_vector = {}
@@ -56,8 +61,8 @@ def get_d_x_y(x, y):
     return cost
 
 
-def bellman_ford(from_router, to_router, neighbour_of_from_router):
-    global neighbours_cost
+def bellman_ford(from_router, to_router, neighbours_of_from_router):
+    global neighbours_cost_dict
     _tuple = ()  # next hop, cost
     unsorted_dv = {}
 
@@ -68,10 +73,41 @@ def bellman_ford(from_router, to_router, neighbour_of_from_router):
     # 𝑑𝑥(𝑦) = 𝑚𝑖𝑛_𝑣⁡{𝑐(𝑥, 𝑣) + 𝑑_𝑣(𝑦)}
     # Dx(y) = min {c(x, y) + Dy(y), c(x, z) + Dz(y)} = min {2 + 0, 7 + 1} = 2
 
-    for router in neighbour_of_from_router:
-        sum = neighbours_cost[router] + get_d_x_y(router, to_router)
-        _tuple = (router, sum)
-        unsorted_dv[sum] = _tuple
+    for router in neighbours_of_from_router:
+        try:
+            sum = neighbours_cost_dict[router] + get_d_x_y(router, to_router)
+            _tuple = (router, sum)
+            unsorted_dv[sum] = _tuple
+        except Exception as e:
+            pass  # skipping if router dead
+
+    sorted_dv = sorted(unsorted_dv.items(), key=operator.itemgetter(0))
+    _tuple = sorted_dv[0]
+    # print("bellman ford returns: ", _tuple)
+    return _tuple[1]
+
+
+def bellman_ford_updated(from_router, to_router, neighbours_of_from_router, alive_neighbour_cost_dict):
+    _tuple = ()  # next hop, cost
+    unsorted_dv = {}
+
+    if from_router == to_router:
+        _tuple = (from_router, 0.0)
+        return _tuple
+
+    # 𝑑𝑥(𝑦) = 𝑚𝑖𝑛_𝑣⁡{𝑐(𝑥, 𝑣) + 𝑑_𝑣(𝑦)}
+    # Dx(y) = min {c(x, y) + Dy(y), c(x, z) + Dz(y)} = min {2 + 0, 7 + 1} = 2
+
+    print("neighbours_of_from_router :", neighbours_of_from_router)
+    print("alive_neighbour_cost_dict :", alive_neighbour_cost_dict)
+
+    for router in neighbours_of_from_router:
+        try:
+            sum = alive_neighbour_cost_dict[router] + get_d_x_y(router, to_router)
+            _tuple = (router, sum)
+            unsorted_dv[sum] = _tuple
+        except Exception as e:
+            pass  # skipping if router dead
 
     sorted_dv = sorted(unsorted_dv.items(), key=operator.itemgetter(0))
     _tuple = sorted_dv[0]
@@ -81,23 +117,57 @@ def bellman_ford(from_router, to_router, neighbour_of_from_router):
 
 def calculate_distance_vector():
     global input_file
-    global neighbours_cost
-    global neighbours
-    global all_router_port
-    global all_router
+    global neighbours_cost_dict
+    global all_router_port_dict
     global router_name
     global matrix_distance_vector  # {'x': {'x': ('y', 2.0), 'y': ('y', 2.0), 'z': ('y', 2.0)}, 'y': {'x': ('y', 3), 'y': ('y', 1), 'z': ('z', 5)}, 'z': {'x': ('z', 3), 'y': ('x', 5), 'z': ('y', 2)}}
     dvs = {}  # {'x': ('y', 2.0), 'y': ('y', 2.0), 'z': ('y', 2.0)}
 
-    neighbours_cost = custom_utils.parse_input_file(input_file)  # {'y': 2.0, 'z': 7.0}
-    neighbours = custom_utils.get_keys_from_dict(neighbours_cost)  # ['y', 'z']
-    all_router = custom_utils.get_keys_from_dict(all_router_port)  # ['x', 'y', 'z']
+    neighbours_cost_dict = custom_utils.parse_input_file(input_file)  # {'y': 2.0, 'z': 7.0}
+    neighbours = custom_utils.get_keys_from_dict(neighbours_cost_dict)  # ['y', 'z']
+    all_router = custom_utils.get_keys_from_dict(all_router_port_dict)  # ['x', 'y', 'z']
     # all_router.append(router_name)
 
     # what will finally happen
     # print("all routers: ", all_router)
     for router in all_router:
         dvs[router] = bellman_ford(router_name, router, neighbours)  # prepare tuple for router
+    matrix_distance_vector[router_name] = dvs
+
+    return dvs
+
+
+def calculate_distance_vector_updated():
+    global dead_router_dict
+    global input_file
+    global neighbours_cost_dict
+    global alive_neighbours_dict
+    global all_router_port_dict
+    global router_name
+    global matrix_distance_vector  # {'x': {'x': ('y', 2.0), 'y': ('y', 2.0), 'z': ('y', 2.0)}, 'y': {'x': ('y', 3), 'y': ('y', 1), 'z': ('z', 5)}, 'z': {'x': ('z', 3), 'y': ('x', 5), 'z': ('y', 2)}}
+    dvs = {}  # {'x': ('y', 2.0), 'y': ('y', 2.0), 'z': ('y', 2.0)}
+
+    from_file_neighbours_cost_dict = custom_utils.parse_input_file(input_file)  # {'y': 2.0, 'z': 7.0}
+    # print("from_file_neighbours_cost_dict: ", from_file_neighbours_cost_dict)
+
+    dead_router_list = custom_utils.get_keys_from_dict(dead_router_dict)
+    # print("dead_router_list: ", dead_router_list)
+    for dead_router in dead_router_list:
+        try:
+            del from_file_neighbours_cost_dict[dead_router]
+        except Exception as e:
+            pass
+
+    neighbours = custom_utils.get_keys_from_dict(from_file_neighbours_cost_dict)  # ['y', 'z']
+
+    all_router = custom_utils.get_keys_from_dict(all_router_port_dict)  # ['x', 'y', 'z']
+    # all_router.append(router_name)
+
+    # what will finally happen
+    # print("all routers: ", all_router)
+    for router in all_router:
+        dvs[router] = bellman_ford_updated(router_name, router, neighbours,
+                                           from_file_neighbours_cost_dict)  # prepare tuple for router
     matrix_distance_vector[router_name] = dvs
 
     return dvs
@@ -178,7 +248,7 @@ def re_transmitter(signum, frame):
     global neighbours_port
     # print("neighbours_port_dict: ", neighbours_port_dict)
     # print("neighbours_port: ", neighbours_port)
-    dv_list = calculate_distance_vector()
+    dv_list = calculate_distance_vector_updated()
 
     # print("Calculated dv_list: ", dv_list)
     # print_dvs_matrix()
@@ -192,6 +262,7 @@ def re_transmitter(signum, frame):
 
 
 def broadcast():
+    global host
     # handshake_pkt = namedtuple('handshake_pkt', 'protocol max_seq_num window_size total_packets')
     handshake_pkt = namedtuple('handshake_pkt', 'what_is_your_port router_name my_port')
     # make handshaking packet
@@ -202,7 +273,6 @@ def broadcast():
     # print("broadcast packet ", pkt_list)
 
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # Create a socket object
-    host = socket.gethostname()  # Get local machine name
     for port in PORT_RANGE:
         if port != ack_port:
             # print("broadcast port scanning to ", port)
@@ -228,16 +298,27 @@ def send_my_port(data):
     s.close()
 
 
+# neighbours_port_dict and all_router_port get updated here
 def update_neighbour_ports(data):
-    global neighbours
+    global dead_router_dict
+    global neighbours_port
     global neighbours_port_dict
+    global all_router_port_dict
     _router_name = data[1]
     _port_number = data[2]
+
+    neighbours = custom_utils.get_keys_from_dict(neighbours_cost_dict)
+
     if _router_name in neighbours:
         neighbours_port_dict[_router_name] = _port_number
         neighbours_port.append(_port_number)
 
-    all_router_port[_router_name] = _port_number
+    all_router_port_dict[_router_name] = _port_number
+
+    try:
+        del dead_router_dict[_router_name]
+    except Exception as e:
+        pass
 
     # print("neighbours_port: ", neighbours_port_dict)
 
@@ -260,6 +341,12 @@ def update_distance_vector_matrix(data):
     # print_dvs_matrix()
 
 
+def update_liveliness_of_router(data):
+    global alive_neighbours_dict
+    received_router_name = data[1]
+    alive_neighbours_dict[received_router_name] = time()
+
+
 def asynchronous_receiver():
     global FREQUENCY
     # print("inside async received...")
@@ -277,6 +364,9 @@ def asynchronous_receiver():
             update_neighbour_ports(data)
         if check_pkt == 'dvs':
             update_distance_vector_matrix(data)
+            update_liveliness_of_router(data)
+        if check_pkt == 'router_dead':
+            remove_router_from_network(data[1])
 
 
 def set_ack_socket():
@@ -292,6 +382,71 @@ def set_ack_socket():
             return ack_port
         except Exception as e:
             pass
+
+
+def remove_router_from_network(r_name):
+    global dead_router_dict
+
+    global neighbours_cost_dict
+    global neighbours_port_dict
+    global all_router_port_dict
+    global alive_neighbours_dict
+    # print("**** Router name will be deleted: ", r_name)
+
+    # print("before removing neighbours_cost_dict", neighbours_cost_dict)
+    # print("before removing neighbours_port_dict", neighbours_port_dict)
+    # print("before removing all_router_port_dict", all_router_port_dict)
+    # print("before removing alive_neighbours_dict", alive_neighbours_dict)
+
+    dead_router_dict[r_name] = True
+
+    try:
+        del neighbours_cost_dict[r_name]
+        del neighbours_port_dict[r_name]
+        del all_router_port_dict[r_name]
+        del alive_neighbours_dict[r_name]
+    except Exception as e:
+        pass
+
+    # print("after removing neighbours_cost_dict", neighbours_cost_dict)
+    # print("after removing neighbours_port_dict", neighbours_port_dict)
+    # print("after removing all_router_port_dict", all_router_port_dict)
+    # print("after removing alive_neighbours_dict", alive_neighbours_dict)
+
+
+def broadcast_router_dead(r_name):
+    global all_router_port_dict
+    global host
+    router_dead_pkt_tuple = namedtuple('router_dead_pkt', 'router_dead router_name')
+    router_dead_pkt = router_dead_pkt_tuple('router_dead', r_name)
+    pkt_list = [router_dead_pkt.router_dead, router_dead_pkt.router_name]
+    pkt = pickle.dumps(pkt_list)
+
+    # print("broadcast packet ", pkt_list)
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # Create a socket object
+    for router_name, port in all_router_port_dict.items():
+        if port != ack_port:
+            # print("broadcast port scanning to ", port)
+            s.sendto(pkt, (host, port))
+
+    s.close()
+
+
+def check_neighbour_alive():
+    global alive_neighbours_dict
+    while True:
+        dead_routers = []
+        # print("alive_neighbours_dict ", alive_neighbours_dict)
+        for r_name, start_time in alive_neighbours_dict.items():
+            end_time = time()
+            time_taken = end_time - start_time  # time_taken is in seconds
+            if time_taken > CHECK_ROUTER_DEAD:
+                dead_routers.append(r_name)
+        for r_name in dead_routers:
+            remove_router_from_network(r_name)
+            broadcast_router_dead(r_name)
+        T_T.sleep(CHECK_ROUTER_DEAD + 2)
 
 
 def start_router_x():
@@ -310,6 +465,7 @@ def start_router_x():
     lock.release()
 
     threading.Thread(target=asynchronous_receiver, args=()).start()
+    threading.Thread(target=check_neighbour_alive, args=()).start()
 
     # print("after thread, boradcast...")
 
@@ -323,17 +479,16 @@ def print_dvs_matrix():
 
 
 def main():
-    global neighbours_cost
+    global neighbours_cost_dict
     global router_name
     global input_file
-    global neighbours
     input_file, router_name = custom_utils.parse_command_line_arguments()
-    neighbours_cost = custom_utils.parse_input_file(input_file)
+    neighbours_cost_dict = custom_utils.parse_input_file(input_file)
 
     print("Router started as: ", router_name)
     # print("Neighbours cost: ", neighbours_cost)
 
-    neighbours = custom_utils.get_keys_from_dict(neighbours_cost)
+    # neighbours = custom_utils.get_keys_from_dict(neighbours_cost_dict)
     # print("Neighbours: ", neighbours)
 
     start_router_x()
