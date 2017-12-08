@@ -15,7 +15,7 @@ from time import time
 
 import custom_utils
 
-FREQUENCY = 2
+FREQUENCY = 15
 CHECK_ROUTER_DEAD = 5
 output_number = 1
 PORT_RANGE = list(range(10001, 20021))
